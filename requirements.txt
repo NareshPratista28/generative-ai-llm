@@ -1,0 +1,6 @@
+langchain
+torch
+accelerate
+streamlit
+langchain_community
+langchain_huggingface
