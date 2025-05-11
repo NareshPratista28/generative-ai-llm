@@ -1,5 +1,8 @@
 # 🚀 Generative AI LLM for Java Programming Questions
 
+![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
+![Status](https://img.shields.io/badge/status-in%20development-yellow)
+
 A system that automatically generates Java programming questions for educational purposes using Large Language Models (LLMs), enhanced with Retrieval-Augmented Generation (RAG).
 
 ---
@@ -57,3 +60,9 @@ python build_vector_store.py
 ```bash
 uvicorn main:app --reload
 ```
+
+---
+
+## 🙌 Credits
+
+This project was developed and is maintained by **Naresh Pratista** as part of a thesis research initiative focused on AI-assisted education.
