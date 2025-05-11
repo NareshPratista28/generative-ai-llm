@@ -1,6 +1,13 @@
-langchain
+uvicorn
+fastapi
+mysql-connector-python
 torch
 accelerate
 streamlit
+langchain
 langchain_community
 langchain_huggingface
+faiss-cpu
+sentence-transformers
+python-dotenv
+tqdm

@@ -1,3 +1,24 @@
-# Virtual environment
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
 source/
-app(old).py
+env/
+ENV/
+.env
+
+# Model files and vector stores
+vector_store/
+*.model
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# Specific to your project
+node_modules/
