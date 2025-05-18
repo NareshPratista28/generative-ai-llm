@@ -1,18 +1,24 @@
+import os
 import re
 import json
 import random
 import time
 import logging
 import requests
+from dotenv import load_dotenv
 from typing import Dict, Tuple, Any, Optional
 from langchain_community.llms import Ollama
 from app.models.lesson import LessonModel
 from app.services.rag.rag_service import RAGService
 
+load_dotenv()
+
 class LLMService:
     """Service untuk menghasilkan pertanyaan latihan Java melalui Ollama LLM."""
     
-    def __init__(self, model_name: str = "gemma3:12b", base_url: str = "http://labai.polinema.ac.id:114",):
+    def __init__(self, 
+                 model_name: str = None, 
+                 base_url: str = None):
         """
         Inisialisasi LLMService.
         
@@ -21,11 +27,22 @@ class LLMService:
             base_url: URL endpoint Ollama
         """
         self.lesson_model = LessonModel()
-        self.model_name = model_name
-        self.base_url = base_url
-        self.temperature = 0.8
-        self. logger = logging.getLogger(__name__)
+        # Load configuration from environment variables if not provided
+        self.model_name = model_name or os.getenv("LLM_MODEL_NAME", "gemma3:12b") 
+        self.base_url = base_url or os.getenv("LLM_BASE_URL", "http://localhost:11434")
+        self.temperature = float(os.getenv("LLM_TEMPERATURE", "0.8"))
+        
+        # Setup logging based on environment configuration
+        log_level = os.getenv("LOG_LEVEL", "INFO")
+        logging.basicConfig(
+            level=getattr(logging, log_level),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(f"LLMService initialized with model: {self.model_name}, base_url: {self.base_url}")
+
         self.rag_service = RAGService()
+        self.successful_examples = []
         
         # Memindahkan scenario seeds ke konstanta kelas
         self.SCENARIO_SEEDS = [
@@ -35,11 +52,6 @@ class LLMService:
             "perhitungan statistika", "simulasi perbankan", 
             "aplikasi keuangan sederhana", "pengolahan data array"
         ]
-        
-        # Setup logging
-        logging.basicConfig(level=logging.INFO, 
-                           format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        self.logger = logging.getLogger(__name__)
     
     def get_llm_instance(self) -> Ollama:
         """
@@ -61,6 +73,7 @@ class LLMService:
         
         Args:
             topic: Topik pemrograman Java
+            scenario: Skenario konteks aplikasi
         
         Returns:
             String berisi contoh-contoh relevan dalam format yang siap dimasukkan ke prompt
@@ -70,28 +83,32 @@ class LLMService:
             return ""
         
         try:
-                # Improve example relevance by combining the topic with the scenario
+            self.logger.info(f"Mencari contoh RAG yang relevan untuk topik '{topic}' dan skenario '{scenario}'")
+
             combined_query = f"{topic} for {scenario} application"
+            self.logger.debug(f"Query kombinasi: '{combined_query}'")
+
             examples = self.rag_service.get_relevant_examples(combined_query, n=2)
             
             if not examples:
-                self.logger.info(f"Tidak ditemukan contoh RAG yang relevan untuk topik: {topic}")
+                self.logger.info(f"Tidak ditemukan contoh RAG yang relevan untuk kombinasi topik dan skenario")
                 return ""
             
             # Format contoh untuk prompt
             examples_text = "\n\nCONTOH SOAL LAINNYA YANG RELEVAN:\n"
             
             for i, example in enumerate(examples, 1):
+                self.logger.debug(f"Contoh RAG #{i}: {example['studi_kasus'][:50]}...")
                 examples_text += f"\nContoh {i}:\n"
                 examples_text += f"**Studi Kasus:**\n{example['studi_kasus']}\n\n"
                 examples_text += f"**Tugas:**\n{example['tugas']}\n\n"
                 examples_text += f"```java\n{example['code']}\n```\n"
             
-            self.logger.info(f"Berhasil mendapatkan {len(examples)} contoh RAG untuk topik: {topic}")
+            self.logger.info(f"Berhasil mendapatkan {len(examples)} contoh RAG yang relevan")
             return examples_text
             
         except Exception as e:
-            self.logger.error(f"Error saat mendapatkan contoh RAG: {str(e)}")
+            self.logger.error(f"Error saat mendapatkan contoh RAG: {str(e)}", exc_info=True)
             return ""
         
 
@@ -107,7 +124,7 @@ class LLMService:
             "code": result["code"]
         })
     
-    def create_prompt(self, prompt_llm: str) -> str:
+    def create_prompt(self, prompt_llm: str, content_text: str = "", task_type: str = None) -> str:
         """
         Menyusun prompt lengkap untuk LLM dengan menambahkan instruksi dan skenario acak.
         
@@ -126,28 +143,33 @@ class LLMService:
             "Jangan berikan jawaban lengkap, beri tanda '...' untuk bagian yang harus diisi"
         ]
         
-        task_types = [
-            "implementasi rumus matematika",
-            "pengolahan string",
-            "perhitungan geometri",
-            "manipulasi array",
-            "penggunaan kondisional",
-            "implementasi loop"
-        ]
-        
-        task_type = random.choice(task_types)
         closing = random.choice(closing_variations)
         timestamp = time.time()
 
         rag_examples = self._get_relevant_rag_examples(task_type, scenario)
-        if rag_examples:
-            prompt_llm += rag_examples
+        
+        # Tambahkan materi pembelajaran jika tersedia
+        max_content_length = 6000
+        content_truncated = content_text
+        if content_text and len(content_text) > max_content_length:
+            content_truncated = content_text[:max_content_length] + "... [materi dipotong]"
+            self.logger.info(f"Materi dipotong dari {len(content_text)} menjadi {max_content_length} karakter")
+        # Tambahkan materi pembelajaran jika tersedia
+        content_section = ""
+        if content_truncated and len(content_truncated.strip()) > 0:
+            content_section = f"""
+            MATERI PEMBELAJARAN (WAJIB DIJADIKAN REFERENSI SOAL):
+            {content_truncated.strip()}
+            
+            """
         
         return f"""
         {prompt_llm}
         Context scenario: {scenario}
-        Tast type: {task_type}
+        Task type: {task_type}
         Timestamp: {timestamp} 
+
+        {content_section}
 
         You are an expert Java programming instructor with experience in creating programming exercises. Create a new and original Java exercise appropriate for beginner students by following these guidelines. ALL RESPONSES MUST BE IN INDONESIAN language.
 
@@ -228,8 +250,6 @@ class LLMService:
         CREATE A NEW EXERCISE DIFFERENT FROM THE EXAMPLE ABOVE. ENSURE YOU FOLLOW THE FORMAT EXACTLY AND DO NOT ADD TEXT OUTSIDE THE FORMAT. REMEMBER: ALL OUTPUT MUST BE IN INDONESIAN LANGUAGE.
         """
     
-        return prompt
-    
     def _validate_response(self, result: Dict[str, str]) -> bool:
         """Validates the quality of the generated response."""
         # Check for minimum content length
@@ -257,32 +277,60 @@ class LLMService:
             Tuple yang berisi hasil respons yang diparsing dan waktu pemrosesan
         """
         try:
+            self.logger.info(f"===== MEMULAI PROSES GENERASI PERTANYAAN (ID: {content_id}) =====")
+
             # Mendapatkan prompt dari model pelajaran
-            prompt_llm = self.lesson_model.get_prompt(content_id)
-            if not prompt_llm:
-                self.logger.error(f"Prompt tidak ditemukan untuk content_id: {content_id}")
-                raise ValueError(f"Prompt tidak ditemukan untuk content_id: {content_id}")
+            self.logger.info(f"[LANGKAH 1/5] Mengambil prompt_llm dan konten dari database (content_id: {content_id})")
+            result = self.lesson_model.get_prompt_and_description(content_id)
+            if not result:
+                self.logger.error(f"Prompt dan konten tidak ditemukan untuk content_id: {content_id}")
+                raise ValueError(f"Prompt dan konten tidak ditemukan untuk content_id: {content_id}")
             
-            # Membuat prompt lengkap
-            full_prompt = self.create_prompt(prompt_llm)
-            
+            prompt_llm = result['prompt_llm']
+            content_text = result['description']
+            content_title = result['title']
+
+            # Log panjang konten untuk debugging
+            self.logger.info(f"Panjang prompt_llm: {len(prompt_llm)} karakter")
+            self.logger.info(f"Panjang content_text: {len(content_text)} karakter")
+            self.logger.info(f"Judul materi: {content_title}")
+
+            # Ekstrak task_type dari konten daripada memilih secara acak
+            self.logger.info(f"[LANGKAH 2/5] Menggunakan judul materi sebagai task_type: '{content_title}'")
+           
+            self.logger.info(f"[LANGKAH 3/5] Menyusun prompt lengkap dengan RAG examples dan materi pembelajaran")
+            full_prompt = self.create_prompt(prompt_llm, content_text, content_title)
+            self.logger.info(f"Prompt lengkap berhasil dibuat: {len(full_prompt)} karakter")
+
             # Mendapatkan instance LLM
+            self.logger.info(f"[LANGKAH 4/5] Mengirim prompt ke model LLM {self.model_name}")
             llm = self.get_llm_instance()
             
             # Mengukur waktu pemrosesan
-            self.logger.info(f"Memulai pembuatan pertanyaan untuk content_id: {content_id}")
             start_time = time.time()
             response = llm.invoke(full_prompt)
             generation_time = time.time() - start_time
             
-            self.logger.info(f"Pertanyaan berhasil dibuat dalam {generation_time:.2f} detik")
+            self.logger.info(f"Model berhasil menghasilkan respons dalam {generation_time:.2f} detik")
+            self.logger.info(f"Panjang respons: {len(response)} karakter")
             
             # Parsing respons
+            self.logger.info(f"[LANGKAH 5/5] Mem-parsing respons model untuk ekstraksi komponen pertanyaan")
             result = self._parse_response(response)
+
+            # Validasi hasil
+            if self._validate_response(result):
+                self.logger.info("Validasi berhasil: respons memenuhi semua kriteria kualitas")
+                # Simpan contoh sukses untuk penggunaan di masa depan
+                self._store_successful_example(result)
+            else:
+                self.logger.warning("Respons tidak memenuhi semua kriteria kualitas, tetapi tetap dikembalikan")
+            
+            self.logger.info(f"===== GENERASI PERTANYAAN SELESAI (ID: {content_id}) =====")
             return result, generation_time
             
         except Exception as e:
-            self.logger.error(f"Gagal menghasilkan pertanyaan: {str(e)}")
+            self.logger.error(f"Gagal menghasilkan pertanyaan: {str(e)}", exc_info=True)
             raise
     
     def _parse_response(self, response: str) -> Dict[str, str]:
@@ -295,6 +343,8 @@ class LLMService:
         Returns:
             Dictionary berisi respons mentah dan kode yang diekstrak
         """
+        self.logger.debug("Memulai parsing respons LLM")
+
         result = {
             "raw_response": response,
             "code": "",
@@ -319,5 +369,11 @@ class LLMService:
         tugas_matches = re.findall(tugas_pattern, response, re.DOTALL)
         if tugas_matches:
             result["tugas"] = tugas_matches[0].strip()
+
+        # Log hasil ekstraksi
+        if all(key in result and result[key] for key in ["code", "studi_kasus", "tugas"]):
+            self.logger.info("Semua komponen berhasil diekstrak dari respons")
+        else:
+            self.logger.warning("Beberapa komponen tidak berhasil diekstrak dari respons")
         
         return result
