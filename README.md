@@ -43,6 +43,12 @@ source env/bin/activate      # For Linux/macOS
 env\Scripts\activate         # For Windows
 ```
 
+3. **Copy .env.example to .env:**
+
+```bash
+cp .env.example .env
+```
+
 3. **Install Dependencies:**
 
 ```bash

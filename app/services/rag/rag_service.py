@@ -37,12 +37,13 @@ class RAGService:
             self.logger.error(f"Gagal memuat vector store: {str(e)}")
             self.vector_store = None
     
-    def get_relevant_examples(self, topic: str, n: int = 2) -> List[Dict[str, Any]]:
+    def get_relevant_examples(self, topic: str, additional_context: str = "", n: int = 2) -> List[Dict[str, Any]]:
         """
         Mendapatkan contoh soal yang relevan dengan topik.
         
         Args:
             topic: Topik Java yang ingin dicari contohnya
+            additional_context: Konteks tambahan untuk memperkaya pencarian
             n: Jumlah contoh yang ingin diambil
             
         Returns:
@@ -53,8 +54,18 @@ class RAGService:
             return []
             
         try:
+            # Buat query yang lebih kaya dengan menggabungkan topik dan konteks tambahan
+            # Jika additional_context kosong, hanya gunakan topik
+            query = topic
+            if additional_context and len(additional_context.strip()) > 0:
+                # Ambil maksimal 200 karakter dari konteks tambahan untuk memperkaya query
+                content = additional_context.strip()[:200]
+                query = f"{topic} {content}"
+                
+            self.logger.info(f"Mencari contoh dengan query multi-kriteria: '{query[:50]}...'")
+
             # Cari dokumen yang relevan dengan topik
-            docs = self.vector_store.similarity_search(topic, k=n)
+            docs = self.vector_store.similarity_search(query, k=n)
             
             # Extract metadata dan siapkan contoh untuk dikembalikan
             examples = []
@@ -66,7 +77,7 @@ class RAGService:
                 }
                 examples.append(example)
                 
-            self.logger.info(f"Berhasil mengambil {len(examples)} contoh relevan untuk '{topic}'")
+            self.logger.info(f"Berhasil mengambil {len(examples)} contoh relevan untuk query multi-kriteria")
             return examples
             
         except Exception as e:

@@ -10,6 +10,7 @@ from typing import Dict, Tuple, Any, Optional
 from langchain_community.llms import Ollama
 from app.models.lesson import LessonModel
 from app.services.rag.rag_service import RAGService
+from app.models.generation_history import GenerationHistory
 
 load_dotenv()
 
@@ -28,8 +29,8 @@ class LLMService:
         """
         self.lesson_model = LessonModel()
         # Load configuration from environment variables if not provided
-        self.model_name = model_name or os.getenv("LLM_MODEL_NAME", "gemma3:12b") 
-        self.base_url = base_url or os.getenv("LLM_BASE_URL", "http://localhost:11434")
+        self.model_name = model_name or os.getenv("LLM_MODEL_NAME")
+        self.base_url = base_url or os.getenv("LLM_BASE_URL")
         self.temperature = float(os.getenv("LLM_TEMPERATURE", "0.8"))
         
         # Setup logging based on environment configuration
@@ -42,16 +43,8 @@ class LLMService:
         self.logger.info(f"LLMService initialized with model: {self.model_name}, base_url: {self.base_url}")
 
         self.rag_service = RAGService()
+        self.history_model = GenerationHistory()
         self.successful_examples = []
-        
-        # Memindahkan scenario seeds ke konstanta kelas
-        self.SCENARIO_SEEDS = [
-            "sistem akademik sekolah", "manajemen perpustakaan", 
-            "aplikasi kalkulator geometri", "sistem informasi mahasiswa",
-            "aplikasi konversi satuan", "aplikasi manajemen tugas",
-            "perhitungan statistika", "simulasi perbankan", 
-            "aplikasi keuangan sederhana", "pengolahan data array"
-        ]
     
     def get_llm_instance(self) -> Ollama:
         """
@@ -67,7 +60,7 @@ class LLMService:
             top_p=0.85,
         )
     
-    def _get_relevant_rag_examples(self, topic: str, scenario: str) -> str:
+    def _get_relevant_rag_examples(self, topic: str, content: str) -> str:
         """
         Mendapatkan contoh relevan dari RAG untuk disertakan dalam prompt.
         
@@ -83,13 +76,19 @@ class LLMService:
             return ""
         
         try:
-            self.logger.info(f"Mencari contoh RAG yang relevan untuk topik '{topic}' dan skenario '{scenario}'")
+            self.logger.info(f"Mencari contoh RAG yang relevan untuk topik '{topic}'dengan koteks tambahan")
 
-            combined_query = f"{topic} for {scenario} application"
-            self.logger.debug(f"Query kombinasi: '{combined_query}'")
+            # Ekstrak konsep penting dari content jika tersedia
+            context = ""
+            if content and len(content) > 0:
+                # Ambil beberapa kalimat pertama dari materi
+                context = content.split(".")[0:3]
+                context = ". ".join(context)
+                self.logger.debug(f"Konteks tambahan: {context[:50]}...")
 
-            examples = self.rag_service.get_relevant_examples(combined_query, n=2)
-            
+
+            examples = self.rag_service.get_relevant_examples(topic, context, n=2)
+
             if not examples:
                 self.logger.info(f"Tidak ditemukan contoh RAG yang relevan untuk kombinasi topik dan skenario")
                 return ""
@@ -130,11 +129,12 @@ class LLMService:
         
         Args:
             prompt_llm: Prompt dasar dari model pelajaran
+            content_text: Teks materi pembelajaran
+            task_type: Judul materi/topik dari database
             
         Returns:
             Prompt yang lengkap untuk dikirim ke LLM
         """
-        scenario = random.choice(self.SCENARIO_SEEDS)
         
         closing_variations = [
             "Pastikan kode belum berisi jawaban dan perlu dilengkapi oleh pengguna",
@@ -145,8 +145,6 @@ class LLMService:
         
         closing = random.choice(closing_variations)
         timestamp = time.time()
-
-        rag_examples = self._get_relevant_rag_examples(task_type, scenario)
         
         # Tambahkan materi pembelajaran jika tersedia
         max_content_length = 6000
@@ -154,7 +152,16 @@ class LLMService:
         if content_text and len(content_text) > max_content_length:
             content_truncated = content_text[:max_content_length] + "... [materi dipotong]"
             self.logger.info(f"Materi dipotong dari {len(content_text)} menjadi {max_content_length} karakter")
-        # Tambahkan materi pembelajaran jika tersedia
+
+        # Ekstrak preview konten untuk RAG
+        content = ""
+        if content_text and len(content_text) > 0:
+            # Ambil 200 karakter pertama untuk preview
+            content = content_text[:200]
+        
+        # Ambil contoh RAG yang relevan dengan topik DAN preview konten
+        rag_examples = self._get_relevant_rag_examples(task_type, content)
+        
         content_section = ""
         if content_truncated and len(content_truncated.strip()) > 0:
             content_section = f"""
@@ -165,13 +172,14 @@ class LLMService:
         
         return f"""
         {prompt_llm}
-        Context scenario: {scenario}
-        Task type: {task_type}
+        Topic: {task_type}
         Timestamp: {timestamp} 
 
         {content_section}
 
         You are an expert Java programming instructor with experience in creating programming exercises. Create a new and original Java exercise appropriate for beginner students by following these guidelines. ALL RESPONSES MUST BE IN INDONESIAN language.
+
+        THE EXERCISE MUST BE DIRECTLY BASED ON THE LEARNING MATERIAL PROVIDED ABOVE.
 
         IMPORTANT! Make sure your exercise includes a clear case study and tasks. Your response format MUST EXACTLY follow this example without any additional text:
 
@@ -327,7 +335,17 @@ class LLMService:
                 self.logger.warning("Respons tidak memenuhi semua kriteria kualitas, tetapi tetap dikembalikan")
             
             self.logger.info(f"===== GENERASI PERTANYAAN SELESAI (ID: {content_id}) =====")
-            return result, generation_time
+
+            # Simpan hasil ke history, sekarang dengan topic_title
+            history_id = self.history_model.save_generation(
+                content_id=content_id,
+                topic_title=content_title,  # Menyimpan judul topik
+                result=result,
+                generation_time=generation_time
+            )
+            
+            # Mengembalikan tiga nilai: hasil, waktu generasi, dan ID history
+            return result, generation_time, history_id
             
         except Exception as e:
             self.logger.error(f"Gagal menghasilkan pertanyaan: {str(e)}", exc_info=True)

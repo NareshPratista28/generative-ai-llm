@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import question_router
+from app.routes import history_router, question_router
 
 app = FastAPI(title="LLM Integration API")
 
@@ -17,6 +17,12 @@ app.include_router(
     question_router.router,
     prefix="/api/v1",
     tags=["Question Generation"]
+)
+
+app.include_router(
+    history_router.router,
+    prefix="/api/v1",
+    tags=["Generation History"]
 )
 
 @app.get("/")
